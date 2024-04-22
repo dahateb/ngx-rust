@@ -448,7 +448,7 @@ fn verify_archive_signature(
     archive_path: &Path,
     signature_path: &Path,
 ) -> Result<(), Box<dyn StdError>> {
-    if let Some(gpg) = gpg_path() {
+    //if let Some(gpg) = gpg_path() {
     //     let gnupghome = cache_dir.join(".gnupg");
     //     let cmd = cmd!(gpg, "--homedir", &gnupghome, "--verify", signature_path, archive_path);
     //     let output = cmd.stderr_to_stdout().stdout_capture().unchecked().run()?;
