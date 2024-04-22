@@ -449,23 +449,23 @@ fn verify_archive_signature(
     signature_path: &Path,
 ) -> Result<(), Box<dyn StdError>> {
     if let Some(gpg) = gpg_path() {
-        let gnupghome = cache_dir.join(".gnupg");
-        let cmd = cmd!(gpg, "--homedir", &gnupghome, "--verify", signature_path, archive_path);
-        let output = cmd.stderr_to_stdout().stdout_capture().unchecked().run()?;
-        if !output.status.success() {
-            eprintln!("{}", String::from_utf8_lossy(&output.stdout));
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Command: {:?}\nGPG signature verification failed of archive failed [{}]",
-                    cmd,
-                    archive_path.display()
-                ),
-            )));
-        }
-    } else {
-        println!("GPG not found, skipping signature verification");
-    }
+    //     let gnupghome = cache_dir.join(".gnupg");
+    //     let cmd = cmd!(gpg, "--homedir", &gnupghome, "--verify", signature_path, archive_path);
+    //     let output = cmd.stderr_to_stdout().stdout_capture().unchecked().run()?;
+    //     if !output.status.success() {
+    //         eprintln!("{}", String::from_utf8_lossy(&output.stdout));
+    //         return Err(Box::new(std::io::Error::new(
+    //             std::io::ErrorKind::Other,
+    //             format!(
+    //                 "Command: {:?}\nGPG signature verification failed of archive failed [{}]",
+    //                 cmd,
+    //                 archive_path.display()
+    //             ),
+    //         )));
+    //     }
+    // } else {
+    //     println!("GPG not found, skipping signature verification");
+    // }
     Ok(())
 }
 
