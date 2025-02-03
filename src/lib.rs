@@ -7,13 +7,13 @@
 //! NGINX modules can be built against a particular version of NGINX. The following environment variables can be used
 //! to specify a particular version of NGINX or an NGINX dependency:
 //!
-//! * `ZLIB_VERSION` (default 1.2.13) -
-//! * `PCRE2_VERSION` (default 10.42)
-//! * `OPENSSL_VERSION` (default 3.0.7)
-//! * `NGX_VERSION` (default 1.23.3) - NGINX OSS version
-//! * `NGX_DEBUG` (default to false)-  if set to true, then will compile NGINX `--with-debug` option
+//! * `ZLIB_VERSION` (default 1.3.1) - zlib version
+//! * `PCRE2_VERSION` (default 10.42 for NGINX 1.22.0 and later, or 8.45 for earlier) - PCRE1 or PCRE2 version
+//! * `OPENSSL_VERSION` (default 3.2.1 for NGINX 1.22.0 and later, or 1.1.1w for earlier) - OpenSSL version
+//! * `NGX_VERSION` (default 1.26.1) - NGINX OSS version
+//! * `NGX_DEBUG` (default to false) -  if set to true, then will compile NGINX `--with-debug` option
 //!
-//! For example, this is how you would compile the [examples](https://github.com/nginxinc/ngx-rust/tree/master/examples) using a specific version of NGINX and enabling
+//! For example, this is how you would compile the [examples](https://github.com/nginx/ngx-rust/tree/master/examples) using a specific version of NGINX and enabling
 //! debugging: `NGX_DEBUG=true NGX_VERSION=1.23.0 cargo build --package=examples --examples --release`
 //!
 //! To build Linux-only modules, use the "linux" feature: `cargo build --package=examples --examples --features=linux --release`
@@ -33,6 +33,13 @@
 //! ```
 
 #![warn(missing_docs)]
+// support both std and no_std
+#![no_std]
+#[cfg(all(not(feature = "std"), feature = "alloc"))]
+extern crate alloc;
+#[cfg(feature = "std")]
+extern crate std;
+
 /// The core module.
 ///
 /// This module provides fundamental utilities needed to interface with many NGINX primitives.
@@ -64,20 +71,23 @@ pub mod log;
 macro_rules! ngx_modules {
     ($( $mod:ident ),+) => {
         #[no_mangle]
-        pub static mut ngx_modules: [*const ngx_module_t; $crate::count!($( $mod, )+) + 1] = [
-            $( unsafe { &$mod } as *const ngx_module_t, )+
-            std::ptr::null()
+        #[allow(non_upper_case_globals)]
+        pub static mut ngx_modules: [*const $crate::ffi::ngx_module_t; $crate::count!($( $mod, )+) + 1] = [
+            $( unsafe { &$mod } as *const $crate::ffi::ngx_module_t, )+
+            ::core::ptr::null()
         ];
 
         #[no_mangle]
-        pub static mut ngx_module_names: [*const c_char; $crate::count!($( $mod, )+) + 1] = [
-            $( concat!(stringify!($mod), "\0").as_ptr() as *const c_char, )+
-            std::ptr::null()
+        #[allow(non_upper_case_globals)]
+        pub static mut ngx_module_names: [*const ::core::ffi::c_char; $crate::count!($( $mod, )+) + 1] = [
+            $( concat!(stringify!($mod), "\0").as_ptr() as *const ::core::ffi::c_char, )+
+            ::core::ptr::null()
         ];
 
         #[no_mangle]
-        pub static mut ngx_module_order: [*const c_char; 1] = [
-            std::ptr::null()
+        #[allow(non_upper_case_globals)]
+        pub static mut ngx_module_order: [*const ::core::ffi::c_char; 1] = [
+            ::core::ptr::null()
         ];
     };
 }

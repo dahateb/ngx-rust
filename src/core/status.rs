@@ -1,5 +1,6 @@
+use core::fmt;
+
 use crate::ffi::*;
-use std::fmt;
 
 /// Status
 ///

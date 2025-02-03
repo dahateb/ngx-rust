@@ -1,4 +1,3 @@
-extern crate bindgen;
 extern crate duct;
 
 use std::collections::HashMap;
@@ -47,17 +46,19 @@ C1F33DD8CE1D4CC613AF14DA9195C48241FBF7DD",
 );
 const OPENSSL_DOWNLOAD_URL_PREFIX: &str = "https://github.com/openssl/openssl/releases/download";
 /// The default version of NGINX to use if the `NGX_VERSION` environment variable is not present
-const NGX_DEFAULT_VERSION: &str = "1.24.0";
+const NGX_DEFAULT_VERSION: &str = "1.26.1";
 
 /// Key 1: Konstantin Pavlov's public key. For Nginx 1.25.3 and earlier
 /// Key 2: Sergey Kandaurov's public key. For Nginx 1.25.4
 /// Key 3: Maxim Dounin's public key. At least used for Nginx 1.18.0
+/// Key 4: Roman Arutyunyan's public key. For Nginx 1.25.5
 const NGX_GPG_SERVER_AND_KEY_IDS: (&str, &str) = (
     UBUNTU_KEYSEVER,
     "\
 13C82A63B603576156E30A4EA0EA981B66B0D967 \
 D6786CE303D9A9022998DC6CC8464D549AF75C0A \
-B0F4253373F8F6F510D42178520A9993A1C052F8",
+B0F4253373F8F6F510D42178520A9993A1C052F8 \
+43387825DDB1BB97EC36BA5D007C8D7C15D87369",
 );
 
 const NGX_DOWNLOAD_URL_PREFIX: &str = "https://nginx.org/download";
@@ -94,14 +95,9 @@ const NGX_BASE_MODULES: [&str; 20] = [
     "--with-threads",
 ];
 /// Additional configuration flags to use when building on Linux.
-const NGX_LINUX_ADDITIONAL_OPTS: [&str; 3] = [
-    "--with-file-aio",
-    "--with-cc-opt=-g -fstack-protector-strong -Wformat -Werror=format-security -Wp,-D_FORTIFY_SOURCE=2 -fPIC",
-    "--with-ld-opt=-Wl,-Bsymbolic-functions -Wl,-z,relro -Wl,-z,now -Wl,--as-needed -pie",
-];
+const NGX_LINUX_ADDITIONAL_OPTS: [&str; 1] = ["--with-file-aio"];
 const ENV_VARS_TRIGGERING_RECOMPILE: [&str; 12] = [
     "DEBUG",
-    "OUT_DIR",
     "ZLIB_VERSION",
     "PCRE2_VERSION",
     "OPENSSL_VERSION",
@@ -110,15 +106,15 @@ const ENV_VARS_TRIGGERING_RECOMPILE: [&str; 12] = [
     "CARGO_MANIFEST_DIR",
     "CARGO_TARGET_TMPDIR",
     "CACHE_DIR",
+    "NGX_DEBUG",
     "NGX_INSTALL_ROOT_DIR",
     "NGX_INSTALL_DIR",
 ];
 
-/// Function invoked when `cargo build` is executed.
 /// This function will download NGINX and all supporting dependencies, verify their integrity,
 /// extract them, execute autoconf `configure` for NGINX, compile NGINX and finally install
 /// NGINX in a subdirectory with the project.
-fn main() -> Result<(), Box<dyn StdError>> {
+pub fn build() -> Result<PathBuf, Box<dyn StdError>> {
     println!("Building NGINX");
     // Create .cache directory
     let cache_dir = make_cache_dir()?;
@@ -138,38 +134,9 @@ fn main() -> Result<(), Box<dyn StdError>> {
     for var in ENV_VARS_TRIGGERING_RECOMPILE {
         println!("cargo:rerun-if-env-changed={var}");
     }
-    println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=wrapper.h");
-    // Read autoconf generated makefile for NGINX and generate Rust bindings based on its includes
-    generate_binding(nginx_src_dir);
-    Ok(())
-}
+    println!("cargo:rerun-if-changed=build/vendored.rs");
 
-/// Generates Rust bindings for NGINX
-fn generate_binding(nginx_source_dir: PathBuf) {
-    let autoconf_makefile_path = nginx_source_dir.join("objs").join("Makefile");
-    let clang_args: Vec<String> = parse_includes_from_makefile(&autoconf_makefile_path)
-        .into_iter()
-        .map(|path| format!("-I{}", path.to_string_lossy()))
-        .collect();
-
-    let bindings = bindgen::Builder::default()
-        // Bindings will not compile on Linux without block listing this item
-        // It is worth investigating why this is
-        .blocklist_item("IPPORT_RESERVED")
-        // The input header we would like to generate bindings for.
-        .header("wrapper.h")
-        .clang_args(clang_args)
-        .layout_tests(false)
-        .generate()
-        .expect("Unable to generate bindings");
-
-    // Write the bindings to the $OUT_DIR/bindings.rs file.
-    let out_dir_env = env::var("OUT_DIR").expect("The required environment variable OUT_DIR was not set");
-    let out_path = PathBuf::from(out_dir_env);
-    bindings
-        .write_to_file(out_path.join("bindings.rs"))
-        .expect("Couldn't write bindings!");
+    Ok(nginx_src_dir.join("objs"))
 }
 
 /*
@@ -394,7 +361,7 @@ fn make_cache_dir() -> Result<PathBuf, Box<dyn StdError>> {
 fn download(cache_dir: &Path, url: &str) -> Result<PathBuf, Box<dyn StdError>> {
     fn proceed_with_download(file_path: &Path) -> bool {
         // File does not exist or is zero bytes
-        !file_path.exists() || file_path.metadata().map_or(false, |m| m.len() < 1)
+        !file_path.exists() || file_path.metadata().is_ok_and(|m| m.len() < 1)
     }
     let filename = url.split('/').last().unwrap();
     let file_path = cache_dir.join(filename);
@@ -516,7 +483,7 @@ fn extract_archive(
             .for_each(|mut entry| {
                 let path = entry.path().unwrap();
                 let stripped_path = path.components().skip(1).collect::<PathBuf>();
-                entry.unpack(&archive_output_dir.join(stripped_path)).unwrap();
+                entry.unpack(archive_output_dir.join(stripped_path)).unwrap();
             });
     } else {
         println!(
@@ -577,7 +544,7 @@ fn compile_nginx(cache_dir: &Path) -> Result<(PathBuf, PathBuf), Box<dyn StdErro
     let build_info_path = nginx_src_dir.join("last-build-info");
     let current_build_info = build_info(&nginx_configure_flags);
     let build_info_no_change = if build_info_path.exists() {
-        read_to_string(&build_info_path).map_or(false, |s| s == current_build_info)
+        read_to_string(&build_info_path).is_ok_and(|s| s == current_build_info)
     } else {
         false
     };
@@ -632,7 +599,7 @@ fn nginx_configure_flags(
         modules
     };
     let mut nginx_opts = vec![format_source_path("--prefix", nginx_install_dir)];
-    if env::var("NGX_DEBUG").map_or(false, |s| s == "true") {
+    if env::var("NGX_DEBUG").is_ok_and(|s| s == "true") {
         println!("Enabling --with-debug");
         nginx_opts.push("--with-debug".to_string());
     }
@@ -695,75 +662,4 @@ fn make(nginx_src_dir: &Path, arg: &str) -> std::io::Result<Output> {
         .dir(nginx_src_dir)
         .stderr_to_stdout()
         .run()
-}
-
-/// Reads through the makefile generated by autoconf and finds all of the includes
-/// used to compile nginx. This is used to generate the correct bindings for the
-/// nginx source code.
-fn parse_includes_from_makefile(nginx_autoconf_makefile_path: &PathBuf) -> Vec<PathBuf> {
-    fn extract_include_part(line: &str) -> &str {
-        line.strip_suffix('\\').map_or(line, |s| s.trim())
-    }
-    /// Extracts the include path from a line of the autoconf generated makefile.
-    fn extract_after_i_flag(line: &str) -> Option<&str> {
-        let mut parts = line.split("-I ");
-        match parts.next() {
-            Some(_) => parts.next().map(extract_include_part),
-            None => None,
-        }
-    }
-
-    let mut includes = vec![];
-    let makefile_contents = match read_to_string(nginx_autoconf_makefile_path) {
-        Ok(path) => path,
-        Err(e) => {
-            panic!(
-                "Unable to read makefile from path [{}]. Error: {}",
-                nginx_autoconf_makefile_path.to_string_lossy(),
-                e
-            );
-        }
-    };
-
-    let mut includes_lines = false;
-    for line in makefile_contents.lines() {
-        if !includes_lines {
-            if let Some(stripped) = line.strip_prefix("ALL_INCS") {
-                includes_lines = true;
-                if let Some(part) = extract_after_i_flag(stripped) {
-                    includes.push(part);
-                }
-                continue;
-            }
-        }
-
-        if includes_lines {
-            if let Some(part) = extract_after_i_flag(line) {
-                includes.push(part);
-            } else {
-                break;
-            }
-        }
-    }
-
-    let makefile_dir = nginx_autoconf_makefile_path
-        .parent()
-        .expect("makefile path has no parent")
-        .parent()
-        .expect("objs dir has no parent")
-        .to_path_buf()
-        .canonicalize()
-        .expect("Unable to canonicalize makefile path");
-
-    includes
-        .into_iter()
-        .map(PathBuf::from)
-        .map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                makefile_dir.join(path)
-            }
-        })
-        .collect()
 }

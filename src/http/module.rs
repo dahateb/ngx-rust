@@ -1,9 +1,10 @@
+use core::ffi::{c_char, c_void};
+use core::fmt;
+use core::ptr;
+
 use crate::core::NGX_CONF_ERROR;
 use crate::core::*;
 use crate::ffi::*;
-
-use core::ptr;
-use std::os::raw::{c_char, c_void};
 
 /// MergeConfigError - configuration cannot be merged with levels above.
 #[derive(Debug)]
@@ -12,10 +13,11 @@ pub enum MergeConfigError {
     NoValue,
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for MergeConfigError {}
 
-impl std::fmt::Display for MergeConfigError {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl fmt::Display for MergeConfigError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
             MergeConfigError::NoValue => "no value".fmt(fmt),
         }
@@ -45,7 +47,7 @@ impl Merge for () {
 /// These functions allocate structures, initialize them, and merge through the configuration
 /// layers.
 ///
-/// See https://nginx.org/en/docs/dev/development_guide.html#adding_new_modules for details.
+/// See <https://nginx.org/en/docs/dev/development_guide.html#adding_new_modules> for details.
 pub trait HTTPModule {
     /// Configuration in the `http` block.
     type MainConf: Merge + Default;

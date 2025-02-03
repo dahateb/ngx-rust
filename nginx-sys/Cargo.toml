@@ -1,23 +1,37 @@
 [package]
 name = "nginx-sys"
 version = "0.5.0"
-edition = "2021"
 categories = ["external-ffi-bindings"]
 description = "FFI bindings to NGINX"
-repository = "https://github.com/nginxinc/ngx-rust"
-homepage = "https://github.com/nginxinc/ngx-rust"
-license = "Apache-2.0"
 keywords = ["nginx", "ffi", "sys"]
-
-[lib]
-crate-type = ["staticlib", "rlib"]
+build = "build/main.rs"
+# This field is required to export DEP_NGINX_ vars
+# See https://github.com/rust-lang/cargo/issues/3544
+links = "nginx"
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 
 [build-dependencies]
-bindgen = "0.69.4"
-which = "6.0.0"
-duct = "0.13.7"
-ureq = { version = "2.9.6", features = ["tls"] }
-flate2 = "1.0.28"
-tar = "0.4.40"
+bindgen = "0.71"
+cc = "1.2.0"
+duct = { version = "0.13.7", optional = true }
+flate2 = { version = "1.0.28", optional = true }
+# Disable non-ASCII domain names support in ureq. We don't need it for any
+# of the 4 domains the buildscript interacts with.
+# See https://github.com/servo/rust-url/issues/993
+idna_adapter = { version = "~1.0", optional = true }
+regex = "1.11.1"
+tar =  { version = "0.4.40", optional = true }
+ureq = { version = "2.9.6", features = ["tls"], optional = true }
+which = { version = "7.0.0", optional = true }
+
+[features]
+vendored = [
+    "dep:which", "dep:duct", "dep:idna_adapter", "dep:ureq", "dep:flate2",
+    "dep:tar"
+]

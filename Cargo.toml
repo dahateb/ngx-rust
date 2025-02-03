@@ -4,22 +4,41 @@ members = [
     "examples",
 ]
 
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+homepage = "https://github.com/nginx/ngx-rust"
+repository = "https://github.com/nginx/ngx-rust"
+rust-version = "1.79.0"
+
 [package]
 name = "ngx"
 version = "0.5.0"
-edition = "2021"
 autoexamples = false
 categories = ["api-bindings", "network-programming"]
 description = "FFI bindings to NGINX"
-repository = "https://github.com/nginxinc/ngx-rust"
-homepage = "https://github.com/nginxinc/ngx-rust"
-license = "Apache-2.0"
 keywords = ["nginx", "module", "sys"]
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
-nginx-sys = { path = "nginx-sys", version = "0.5.0"}
+nginx-sys = { path = "nginx-sys", default-features=false, version = "0.5.0"}
+
+[features]
+default = ["vendored","std"]
+# Enables the components using memory allocation.
+# If no `std` flag, `alloc` crate is internally used instead. This flag is mainly for `no_std` build.
+alloc = []
+# Enables the components using `std` crate.
+# Currently the only difference to `alloc` flag is `std::error::Error` implementation.
+std = ["alloc"]
+# Build our own copy of the NGINX by default.
+# This could be disabled with `--no-default-features` to minimize the dependency tree
+# when building against an existing copy of the NGINX with the NGX_OBJS variable.
+vendored = ["nginx-sys/vendored"]
 
 [badges]
 maintenance = { status = "experimental" }

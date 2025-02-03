@@ -1,12 +1,12 @@
+use core::ffi::c_void;
+use core::fmt;
+use core::slice;
+use core::str::FromStr;
+
 use crate::core::*;
 use crate::ffi::*;
 use crate::http::status::*;
 use crate::ngx_null_string;
-use std::fmt;
-use std::os::raw::c_void;
-
-use std::error::Error;
-use std::str::FromStr;
 
 /// Define a static request handler.
 ///
@@ -14,9 +14,9 @@ use std::str::FromStr;
 #[macro_export]
 macro_rules! http_request_handler {
     ( $name: ident, $handler: expr ) => {
-        #[no_mangle]
-        extern "C" fn $name(r: *mut ngx_http_request_t) -> ngx_int_t {
-            let status: Status = $handler(unsafe { &mut $crate::http::Request::from_ngx_http_request(r) });
+        extern "C" fn $name(r: *mut $crate::ffi::ngx_http_request_t) -> $crate::ffi::ngx_int_t {
+            let status: $crate::core::Status =
+                $handler(unsafe { &mut $crate::http::Request::from_ngx_http_request(r) });
             status.0
         }
     };
@@ -28,8 +28,11 @@ macro_rules! http_request_handler {
 #[macro_export]
 macro_rules! http_subrequest_handler {
     ( $name: ident, $handler: expr ) => {
-        #[no_mangle]
-        unsafe extern "C" fn $name(r: *mut ngx_http_request_t, data: *mut c_void, rc: ngx_int_t) -> ngx_int_t {
+        unsafe extern "C" fn $name(
+            r: *mut $crate::ffi::ngx_http_request_t,
+            data: *mut ::core::ffi::c_void,
+            rc: $crate::ffi::ngx_int_t,
+        ) -> $crate::ffi::ngx_int_t {
             $handler(r, data, rc)
         }
     };
@@ -43,8 +46,11 @@ macro_rules! http_subrequest_handler {
 #[macro_export]
 macro_rules! http_variable_set {
     ( $name: ident, $handler: expr ) => {
-        #[no_mangle]
-        unsafe extern "C" fn $name(r: *mut ngx_http_request_t, v: *mut ngx_variable_value_t, data: usize) {
+        unsafe extern "C" fn $name(
+            r: *mut $crate::ffi::ngx_http_request_t,
+            v: *mut $crate::ffi::ngx_variable_value_t,
+            data: usize,
+        ) {
             $handler(
                 unsafe { &mut $crate::http::Request::from_ngx_http_request(r) },
                 v,
@@ -63,9 +69,12 @@ macro_rules! http_variable_set {
 #[macro_export]
 macro_rules! http_variable_get {
     ( $name: ident, $handler: expr ) => {
-        #[no_mangle]
-        unsafe extern "C" fn $name(r: *mut ngx_http_request_t, v: *mut ngx_variable_value_t, data: usize) -> ngx_int_t {
-            let status: Status = $handler(
+        unsafe extern "C" fn $name(
+            r: *mut $crate::ffi::ngx_http_request_t,
+            v: *mut $crate::ffi::ngx_variable_value_t,
+            data: usize,
+        ) -> $crate::ffi::ngx_int_t {
+            let status: $crate::core::Status = $handler(
                 unsafe { &mut $crate::http::Request::from_ngx_http_request(r) },
                 v,
                 data,
@@ -75,7 +84,9 @@ macro_rules! http_variable_get {
     };
 }
 
-/// Wrapper struct for an `ngx_http_request_t` pointer, , providing methods for working with HTTP requests.
+/// Wrapper struct for an [`ngx_http_request_t`] pointer, providing methods for working with HTTP requests.
+///
+/// See <https://nginx.org/en/docs/dev/development_guide.html#http_request>
 #[repr(transparent)]
 pub struct Request(ngx_http_request_t);
 
@@ -94,8 +105,6 @@ impl<'a> From<&'a mut Request> for *mut ngx_http_request_t {
 impl Request {
     /// Create a [`Request`] from an [`ngx_http_request_t`].
     ///
-    /// [`ngx_http_request_t`]: https://nginx.org/en/docs/dev/development_guide.html#http_request
-    ///
     /// # Safety
     ///
     /// The caller has provided a valid non-null pointer to a valid `ngx_http_request_t`
@@ -107,7 +116,7 @@ impl Request {
     /// Is this the main request (as opposed to a subrequest)?
     pub fn is_main(&self) -> bool {
         let main = self.0.main.cast();
-        std::ptr::eq(self, main)
+        core::ptr::eq(self, main)
     }
 
     /// Request pool.
@@ -121,9 +130,8 @@ impl Request {
     /// The option wraps an ngx_http_upstream_t instance, it will be none when the underlying NGINX request
     /// does not have a pointer to a [`ngx_http_upstream_t`] upstream structure.
     ///
-    /// [`ngx_http_upstream_t`]: is best described in
-    /// https://nginx.org/en/docs/dev/development_guide.html#http_request
-    /// https://nginx.org/en/docs/dev/development_guide.html#http_load_balancing
+    /// [`ngx_http_upstream_t`] is best described in
+    /// <https://nginx.org/en/docs/dev/development_guide.html#http_load_balancing>
     pub fn upstream(&self) -> Option<*mut ngx_http_upstream_t> {
         if self.0.upstream.is_null() {
             return None;
@@ -145,19 +153,49 @@ impl Request {
         unsafe { (*self.connection()).log }
     }
 
-    /// Module location configuration.
-    fn get_module_loc_conf_ptr(&self, module: &ngx_module_t) -> *mut c_void {
-        unsafe { *self.0.loc_conf.add(module.ctx_index) }
+    /// Global configuration for a module.
+    ///
+    /// Applies to the entire `http` block.
+    ///
+    /// # Safety
+    /// Caller must ensure that type `T` matches the configuration type for the specified module.
+    pub fn get_module_main_conf<T>(&self, module: &ngx_module_t) -> Option<&'static T> {
+        // SAFETY: main conf is either NULL or allocated with ngx_p(c)alloc and
+        // explicitly initialized by the module
+        unsafe {
+            let scf = *self.0.main_conf.add(module.ctx_index);
+            scf.cast::<T>().as_ref()
+        }
     }
 
-    /// Module location configuration.
-    pub fn get_module_loc_conf<T>(&self, module: &ngx_module_t) -> Option<&T> {
-        let lc_prt = self.get_module_loc_conf_ptr(module) as *mut T;
-        if lc_prt.is_null() {
-            return None;
+    /// Server-specific configuration for a module.
+    ///
+    /// Applies to a single `server` block.
+    ///
+    /// # Safety
+    /// Caller must ensure that type `T` matches the configuration type for the specified module.
+    pub fn get_module_srv_conf<T>(&self, module: &ngx_module_t) -> Option<&'static T> {
+        // SAFETY: server conf is either NULL or allocated with ngx_p(c)alloc and
+        // explicitly initialized by the module
+        unsafe {
+            let scf = *self.0.srv_conf.add(module.ctx_index);
+            scf.cast::<T>().as_ref()
         }
-        let lc = unsafe { &*lc_prt };
-        Some(lc)
+    }
+
+    /// Location-specific configuration for a module.
+    ///
+    /// Applies to a signle `location`, `if` or `limit_except` block.
+    ///
+    /// # Safety
+    /// Caller must ensure that type `T` matches the configuration type for the specified module.
+    pub fn get_module_loc_conf<T>(&self, module: &ngx_module_t) -> Option<&'static T> {
+        // SAFETY: location conf is either NULL or allocated with ngx_p(c)alloc and
+        // explicitly initialized by the module
+        unsafe {
+            let lcf = *self.0.loc_conf.add(module.ctx_index);
+            lcf.cast::<T>().as_ref()
+        }
     }
 
     /// Get Module context pointer
@@ -167,18 +205,15 @@ impl Request {
 
     /// Get Module context
     pub fn get_module_ctx<T>(&self, module: &ngx_module_t) -> Option<&T> {
-        let cf = self.get_module_ctx_ptr(module) as *mut T;
-
-        if cf.is_null() {
-            return None;
-        }
-        let co = unsafe { &*cf };
-        Some(co)
+        let ctx = self.get_module_ctx_ptr(module).cast::<T>();
+        // SAFETY: ctx is either NULL or allocated with ngx_p(c)alloc and
+        // explicitly initialized by the module
+        unsafe { ctx.as_ref() }
     }
 
     /// Sets the value as the module's context.
     ///
-    /// See https://nginx.org/en/docs/dev/development_guide.html#http_request
+    /// See <https://nginx.org/en/docs/dev/development_guide.html#http_request>
     pub fn set_module_ctx(&self, value: *mut c_void, module: &ngx_module_t) {
         unsafe {
             *self.0.ctx.add(module.ctx_index) = value;
@@ -227,7 +262,7 @@ impl Request {
 
     /// Add header to the `headers_in` object.
     ///
-    /// See https://nginx.org/en/docs/dev/development_guide.html#http_request
+    /// See <https://nginx.org/en/docs/dev/development_guide.html#http_request>
     pub fn add_header_in(&mut self, key: &str, value: &str) -> Option<()> {
         let table: *mut ngx_table_elt_t = unsafe { ngx_list_push(&mut self.0.headers_in.headers) as _ };
         unsafe { add_to_ngx_table(table, self.0.pool, key, value) }
@@ -235,7 +270,7 @@ impl Request {
 
     /// Add header to the `headers_out` object.
     ///
-    /// See https://nginx.org/en/docs/dev/development_guide.html#http_request
+    /// See <https://nginx.org/en/docs/dev/development_guide.html#http_request>
     pub fn add_header_out(&mut self, key: &str, value: &str) -> Option<()> {
         let table: *mut ngx_table_elt_t = unsafe { ngx_list_push(&mut self.0.headers_out.headers) as _ };
         unsafe { add_to_ngx_table(table, self.0.pool, key, value) }
@@ -302,7 +337,7 @@ impl Request {
                 ngx_http_internal_redirect(
                     (self as *const Request as *mut Request).cast(),
                     uri_ptr,
-                    std::ptr::null_mut(),
+                    core::ptr::null_mut(),
                 );
             }
         }
@@ -319,7 +354,7 @@ impl Request {
         let uri_ptr = unsafe { &mut ngx_str_t::from_str(self.0.pool, uri) as *mut _ };
         // -------------
         // allocate memory and set values for ngx_http_post_subrequest_t
-        let sub_ptr = self.pool().alloc(std::mem::size_of::<ngx_http_post_subrequest_t>());
+        let sub_ptr = self.pool().alloc(core::mem::size_of::<ngx_http_post_subrequest_t>());
 
         // assert!(sub_ptr.is_null());
         let post_subreq = sub_ptr as *const ngx_http_post_subrequest_t as *mut ngx_http_post_subrequest_t;
@@ -329,12 +364,12 @@ impl Request {
         }
         // -------------
 
-        let mut psr: *mut ngx_http_request_t = std::ptr::null_mut();
+        let mut psr: *mut ngx_http_request_t = core::ptr::null_mut();
         let r = unsafe {
             ngx_http_subrequest(
                 (self as *const Request as *mut Request).cast(),
                 uri_ptr,
-                std::ptr::null_mut(),
+                core::ptr::null_mut(),
                 &mut psr as *mut _,
                 sub_ptr as *mut _,
                 NGX_HTTP_SUBREQUEST_WAITED as _,
@@ -348,7 +383,7 @@ impl Request {
          * allocate fake request body to avoid attempts to read it and to make
          * sure real body file (if already read) won't be closed by upstream
          */
-        sr.request_body = self.pool().alloc(std::mem::size_of::<ngx_http_request_body_t>()) as *mut _;
+        sr.request_body = self.pool().alloc(core::mem::size_of::<ngx_http_request_body_t>()) as *mut _;
 
         if sr.request_body.is_null() {
             return Status::NGX_ERROR;
@@ -358,13 +393,13 @@ impl Request {
     }
 
     /// Iterate over headers_in
-    /// each header item is (String, String) (copied)
+    /// each header item is (&str, &str) (borrowed)
     pub fn headers_in_iterator(&self) -> NgxListIterator {
         unsafe { list_iterator(&self.0.headers_in.headers) }
     }
 
     /// Iterate over headers_out
-    /// each header item is (String, String) (copied)
+    /// each header item is (&str, &str) (borrowed)
     pub fn headers_out_iterator(&self) -> NgxListIterator {
         unsafe { list_iterator(&self.0.headers_out.headers) }
     }
@@ -385,64 +420,63 @@ impl fmt::Debug for Request {
     }
 }
 
-/// Iterator for `ngx_list_t` types.
+/// Iterator for [`ngx_list_t`] types.
 ///
-/// Implementes the std::iter::Iterator trait.
-pub struct NgxListIterator {
-    done: bool,
-    part: *const ngx_list_part_t,
-    h: *const ngx_table_elt_t,
+/// Implementes the core::iter::Iterator trait.
+pub struct NgxListIterator<'a> {
+    part: Option<ListPart<'a>>,
     i: ngx_uint_t,
 }
+struct ListPart<'a> {
+    raw: &'a ngx_list_part_t,
+    arr: &'a [ngx_table_elt_t],
+}
+impl<'a> From<&'a ngx_list_part_t> for ListPart<'a> {
+    fn from(raw: &'a ngx_list_part_t) -> Self {
+        let arr = if raw.nelts != 0 {
+            unsafe { slice::from_raw_parts(raw.elts.cast(), raw.nelts) }
+        } else {
+            &[]
+        };
+        Self { raw, arr }
+    }
+}
 
-// create new http request iterator
+/// Creates new HTTP header iterator
+///
 /// # Safety
 ///
-/// The caller has provided a valid `ngx_str_t` which can be dereferenced validly.
-pub unsafe fn list_iterator(list: *const ngx_list_t) -> NgxListIterator {
-    let part: *const ngx_list_part_t = &(*list).part;
-
+/// The caller has provided a valid [`ngx_str_t`] which can be dereferenced validly.
+pub unsafe fn list_iterator(list: &ngx_list_t) -> NgxListIterator {
     NgxListIterator {
-        done: false,
-        part,
-        h: (*part).elts as *const ngx_table_elt_t,
+        part: Some((&list.part).into()),
         i: 0,
     }
 }
 
 // iterator for ngx_list_t
-impl Iterator for NgxListIterator {
-    // type Item = (&str,&str);
-    // TODO: try to use str instead of string
+impl<'a> Iterator for NgxListIterator<'a> {
+    // TODO: try to use struct instead of &str pair
     // something like pub struct Header(ngx_table_elt_t);
     // then header would have key and value
 
-    type Item = (String, String);
+    type Item = (&'a str, &'a str);
 
     fn next(&mut self) -> Option<Self::Item> {
-        unsafe {
-            if self.done {
-                None
+        let part = self.part.as_mut()?;
+        if self.i >= part.arr.len() {
+            if let Some(next_part_raw) = unsafe { part.raw.next.as_ref() } {
+                // loop back
+                *part = next_part_raw.into();
+                self.i = 0;
             } else {
-                if self.i >= (*self.part).nelts {
-                    if (*self.part).next.is_null() {
-                        self.done = true;
-                        return None;
-                    }
-
-                    // loop back
-                    self.part = (*self.part).next;
-                    self.h = (*self.part).elts as *mut ngx_table_elt_t;
-                    self.i = 0;
-                }
-
-                let header: *const ngx_table_elt_t = self.h.add(self.i);
-                let header_name: ngx_str_t = (*header).key;
-                let header_value: ngx_str_t = (*header).value;
-                self.i += 1;
-                Some((header_name.to_string(), header_value.to_string()))
+                self.part = None;
+                return None;
             }
         }
+        let header = &part.arr[self.i];
+        self.i += 1;
+        Some((header.key.to_str(), header.value.to_str()))
     }
 }
 
@@ -573,7 +607,7 @@ impl<'a> PartialEq<&'a Method> for Method {
     }
 }
 
-impl<'a> PartialEq<Method> for &'a Method {
+impl PartialEq<Method> for &Method {
     #[inline]
     fn eq(&self, other: &Method) -> bool {
         *self == other
@@ -601,7 +635,7 @@ impl<'a> PartialEq<&'a str> for Method {
     }
 }
 
-impl<'a> PartialEq<Method> for &'a str {
+impl PartialEq<Method> for &str {
     #[inline]
     fn eq(&self, other: &Method) -> bool {
         *self == other.as_ref()
@@ -675,7 +709,8 @@ impl fmt::Display for InvalidMethod {
     }
 }
 
-impl Error for InvalidMethod {}
+#[cfg(feature = "std")]
+impl std::error::Error for InvalidMethod {}
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum MethodInner {

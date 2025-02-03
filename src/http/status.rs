@@ -1,7 +1,7 @@
+use core::fmt;
+
 use crate::core::Status;
 use crate::ffi::*;
-use std::error::Error;
-use std::fmt;
 
 /// Represents an HTTP status code.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -24,11 +24,12 @@ impl InvalidHTTPStatusCode {
 
 impl fmt::Display for InvalidHTTPStatusCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("invalid status code".to_string().as_str())
+        f.write_str("invalid status code")
     }
 }
 
-impl Error for InvalidHTTPStatusCode {}
+#[cfg(feature = "std")]
+impl std::error::Error for InvalidHTTPStatusCode {}
 
 impl From<HTTPStatus> for Status {
     fn from(val: HTTPStatus) -> Self {

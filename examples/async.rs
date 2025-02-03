@@ -1,17 +1,18 @@
-use ngx::ffi::{
-    nginx_version, ngx_array_push, ngx_command_t, ngx_conf_t, ngx_cycle, ngx_event_t, ngx_http_core_module,
-    ngx_http_core_run_phases, ngx_http_handler_pt, ngx_http_module_t, ngx_http_phases_NGX_HTTP_ACCESS_PHASE,
-    ngx_http_request_t, ngx_int_t, ngx_module_t, ngx_posted_events, ngx_queue_s, ngx_str_t, ngx_uint_t, NGX_CONF_TAKE1,
-    NGX_HTTP_LOC_CONF, NGX_HTTP_MODULE, NGX_RS_HTTP_LOC_CONF_OFFSET, NGX_RS_MODULE_SIGNATURE,
-};
-use ngx::http::MergeConfigError;
-use ngx::{core, core::Status, http, http::HTTPModule};
-use ngx::{http_request_handler, ngx_log_debug_http, ngx_modules, ngx_null_command, ngx_string};
-use std::os::raw::{c_char, c_void};
+use std::ffi::{c_char, c_void};
 use std::ptr::{addr_of, addr_of_mut};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
+
+use ngx::core;
+use ngx::ffi::{
+    ngx_array_push, ngx_command_t, ngx_conf_t, ngx_cycle, ngx_event_t, ngx_http_core_module, ngx_http_core_run_phases,
+    ngx_http_handler_pt, ngx_http_module_t, ngx_http_phases_NGX_HTTP_ACCESS_PHASE, ngx_http_request_t, ngx_int_t,
+    ngx_module_t, ngx_posted_events, ngx_queue_s, ngx_str_t, ngx_uint_t, NGX_CONF_TAKE1, NGX_HTTP_LOC_CONF,
+    NGX_HTTP_LOC_CONF_OFFSET, NGX_HTTP_MODULE,
+};
+use ngx::http::{self, HTTPModule, MergeConfigError};
+use ngx::{http_request_handler, ngx_log_debug_http, ngx_null_command, ngx_string};
 use tokio::runtime::Runtime;
 
 struct Module;
@@ -53,21 +54,19 @@ impl Default for ModuleConfig {
     }
 }
 
-#[no_mangle]
-static mut ngx_http_async_commands: [ngx_command_t; 2] = [
+static mut NGX_HTTP_ASYNC_COMMANDS: [ngx_command_t; 2] = [
     ngx_command_t {
         name: ngx_string!("async"),
         type_: (NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1) as ngx_uint_t,
         set: Some(ngx_http_async_commands_set_enable),
-        conf: NGX_RS_HTTP_LOC_CONF_OFFSET,
+        conf: NGX_HTTP_LOC_CONF_OFFSET,
         offset: 0,
         post: std::ptr::null_mut(),
     },
     ngx_null_command!(),
 ];
 
-#[no_mangle]
-static ngx_http_async_module_ctx: ngx_http_module_t = ngx_http_module_t {
+static NGX_HTTP_ASYNC_MODULE_CTX: ngx_http_module_t = ngx_http_module_t {
     preconfiguration: Some(Module::preconfiguration),
     postconfiguration: Some(Module::postconfiguration),
     create_main_conf: Some(Module::create_main_conf),
@@ -78,38 +77,19 @@ static ngx_http_async_module_ctx: ngx_http_module_t = ngx_http_module_t {
     merge_loc_conf: Some(Module::merge_loc_conf),
 };
 
-ngx_modules!(ngx_http_async_module);
+// Generate the `ngx_modules` table with exported modules.
+// This feature is required to build a 'cdylib' dynamic module outside of the NGINX buildsystem.
+#[cfg(feature = "export-modules")]
+ngx::ngx_modules!(ngx_http_async_module);
 
-#[no_mangle]
+#[used]
+#[allow(non_upper_case_globals)]
+#[cfg_attr(not(feature = "export-modules"), no_mangle)]
 pub static mut ngx_http_async_module: ngx_module_t = ngx_module_t {
-    ctx_index: ngx_uint_t::max_value(),
-    index: ngx_uint_t::max_value(),
-    name: std::ptr::null_mut(),
-    spare0: 0,
-    spare1: 0,
-    version: nginx_version as ngx_uint_t,
-    signature: NGX_RS_MODULE_SIGNATURE.as_ptr() as *const c_char,
-
-    ctx: &ngx_http_async_module_ctx as *const _ as *mut _,
-    commands: unsafe { &ngx_http_async_commands[0] as *const _ as *mut _ },
-    type_: NGX_HTTP_MODULE as ngx_uint_t,
-
-    init_master: None,
-    init_module: None,
-    init_process: None,
-    init_thread: None,
-    exit_thread: None,
-    exit_process: None,
-    exit_master: None,
-
-    spare_hook0: 0,
-    spare_hook1: 0,
-    spare_hook2: 0,
-    spare_hook3: 0,
-    spare_hook4: 0,
-    spare_hook5: 0,
-    spare_hook6: 0,
-    spare_hook7: 0,
+    ctx: std::ptr::addr_of!(NGX_HTTP_ASYNC_MODULE_CTX) as _,
+    commands: unsafe { &NGX_HTTP_ASYNC_COMMANDS[0] as *const _ as *mut _ },
+    type_: NGX_HTTP_MODULE as _,
+    ..ngx_module_t::default()
 };
 
 impl http::Merge for ModuleConfig {
@@ -149,7 +129,7 @@ unsafe impl Send for EventData {}
 unsafe impl Sync for EventData {}
 
 // same as ngx_post_event
-// source: https://github.com/nginxinc/ngx-rust/pull/31/files#diff-132330bb775bed17fb9990ec2b56e6c52e6a9e56d62f2114fade95e4decdba08R80-R90
+// source: https://github.com/nginx/ngx-rust/pull/31/files#diff-132330bb775bed17fb9990ec2b56e6c52e6a9e56d62f2114fade95e4decdba08R80-R90
 unsafe fn post_event(event: *mut ngx_event_t, queue: *mut ngx_queue_s) {
     let event = &mut (*event);
     if event.posted() == 0 {
@@ -230,7 +210,6 @@ http_request_handler!(async_access_handler, |request: &mut http::Request| {
     core::Status::NGX_DONE
 });
 
-#[no_mangle]
 extern "C" fn ngx_http_async_commands_set_enable(
     cf: *mut ngx_conf_t,
     _cmd: *mut ngx_command_t,
