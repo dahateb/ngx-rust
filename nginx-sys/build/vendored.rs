@@ -96,6 +96,13 @@ const NGX_BASE_MODULES: [&str; 20] = [
 ];
 /// Additional configuration flags to use when building on Linux.
 const NGX_LINUX_ADDITIONAL_OPTS: [&str; 1] = ["--with-file-aio"];
+/// Extra C compiler options passed to NGINX's `configure` via `--with-cc-opt`.
+///
+/// NGINX builds with `-Werror`. GCC 15+ added `-Wunterminated-string-initialization`, which
+/// NGINX releases before 1.27.x trip on deliberately non-NUL-terminated `u_char` arrays
+/// (e.g. `ngx_http_v2_filter_module.c`), so the warning must be disabled to build with a
+/// modern GCC. Clang silently ignores the unknown `-Wno-` option.
+const NGX_CC_OPTS: [&str; 1] = ["-Wno-unterminated-string-initialization"];
 const ENV_VARS_TRIGGERING_RECOMPILE: [&str; 12] = [
     "DEBUG",
     "ZLIB_VERSION",
@@ -598,7 +605,10 @@ fn nginx_configure_flags(
         }
         modules
     };
-    let mut nginx_opts = vec![format_source_path("--prefix", nginx_install_dir)];
+    let mut nginx_opts = vec![
+        format_source_path("--prefix", nginx_install_dir),
+        format!("--with-cc-opt={}", NGX_CC_OPTS.join(" ")),
+    ];
     if env::var("NGX_DEBUG").is_ok_and(|s| s == "true") {
         println!("Enabling --with-debug");
         nginx_opts.push("--with-debug".to_string());
